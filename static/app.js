@@ -11,6 +11,18 @@ let currentPdf = null;
 let currentPage = 1;
 let currentZoom = 1.15;
 let sourceRenderToken = 0;
+let renderedResultTaskId = null;
+let renderedMarkdownKey = '';
+let renderedJsonKey = '';
+let cachedJsonLines = [];
+let cachedJsonMaxLineLength = 0;
+let jsonRenderToken = 0;
+const JSON_LINE_HEIGHT = 21;
+const JSON_PADDING_TOP = 34;
+const JSON_PADDING_RIGHT = 40;
+const JSON_PADDING_BOTTOM = 34;
+const JSON_PADDING_LEFT = 40;
+const JSON_OVERSCAN_LINES = 10;
 
 const els = {
     sidebar: document.getElementById('sidebar'),
@@ -104,6 +116,7 @@ function setupEventListeners() {
     els.zoomInBtn.addEventListener('click', () => changeZoom(0.15));
     els.zoomOutBtn.addEventListener('click', () => changeZoom(-0.15));
     els.sourceViewer.addEventListener('scroll', updateCurrentPageFromScroll);
+    els.jsonView.addEventListener('scroll', renderVisibleJsonLines);
 
     document.querySelectorAll('.task-tab').forEach((button) => {
         button.addEventListener('click', () => {
@@ -116,10 +129,7 @@ function setupEventListeners() {
 
     document.querySelectorAll('.view-tab').forEach((button) => {
         button.addEventListener('click', () => {
-            document.querySelectorAll('.view-tab').forEach((tab) => tab.classList.remove('active'));
-            button.classList.add('active');
-            activeResultView = button.dataset.view;
-            renderResultPane(getActiveTask());
+            setActiveResultView(button.dataset.view);
         });
     });
 }
@@ -511,28 +521,78 @@ async function renderPdfDocument(renderToken = sourceRenderToken) {
     updateCurrentPageFromScroll();
 }
 
-function renderResultPane(task) {
+function setActiveResultView(view) {
+    if (!view || view === activeResultView) return;
+    activeResultView = view;
+    document.querySelectorAll('.view-tab').forEach((tab) => {
+        tab.classList.toggle('active', tab.dataset.view === view);
+    });
+    renderResultPane(getActiveTask(), { deferJson: true });
+}
+
+function resultDataKey(task) {
+    if (!task) return '';
+    return [
+        task.id,
+        task.status,
+        task.updatedAt || 0,
+        task.markdown?.length || 0,
+        task.ocrResults?.length || 0
+    ].join(':');
+}
+
+function markdownRenderKey(task) {
+    return `${resultDataKey(task)}:${sourceRenderToken}:${currentZoom}`;
+}
+
+function resetResultRenderCache(taskId = null) {
+    renderedResultTaskId = taskId;
+    renderedMarkdownKey = '';
+    renderedJsonKey = '';
+    cachedJsonLines = [];
+    cachedJsonMaxLineLength = 0;
+    jsonRenderToken += 1;
+}
+
+function showResultView(view) {
+    const showJson = view === 'json';
+    els.markdownView.classList.toggle('hidden', showJson);
+    els.jsonView.classList.toggle('hidden', !showJson);
+}
+
+function renderResultPane(task, { deferJson = false } = {}) {
     if (!task) {
+        resetResultRenderCache();
+        showResultView('markdown');
         els.resultTitle.textContent = '解析结果';
         els.markdownView.innerHTML = '<div class="empty-result">选择左侧任务，或上传一个新文件开始解析。</div>';
         els.jsonView.textContent = '';
         return;
     }
 
+    if (renderedResultTaskId !== task.id) {
+        resetResultRenderCache(task.id);
+    }
+
     els.resultTitle.textContent = resultPaneTitle(task);
 
     if (activeResultView === 'json') {
-        els.markdownView.classList.add('hidden');
-        els.jsonView.classList.remove('hidden');
-        els.jsonView.textContent = JSON.stringify(toOfficialJson(task), null, 2);
+        showResultView('json');
+        renderJsonResult(task, { defer: deferJson });
         return;
     }
 
-    els.jsonView.classList.add('hidden');
-    els.markdownView.classList.remove('hidden');
+    showResultView('markdown');
+    const markdownKey = markdownRenderKey(task);
+    if (renderedMarkdownKey === markdownKey) {
+        warmJsonResultCache(task);
+        return;
+    }
 
     if (renderOfficialLayoutResult(task)) {
+        renderedMarkdownKey = markdownKey;
         renderMathWhenReady(els.markdownView);
+        warmJsonResultCache(task);
         return;
     }
 
@@ -541,6 +601,8 @@ function renderResultPane(task) {
         clearSourceHighlight();
         clearSourceHotspots();
         els.markdownView.innerHTML = `<div class="empty-result">${emptyResultText(task)}</div>`;
+        renderedMarkdownKey = markdownKey;
+        warmJsonResultCache(task);
         return;
     }
 
@@ -551,7 +613,93 @@ function renderResultPane(task) {
     const html = renderMarkdownHtml(renderMarkdown);
     els.markdownView.innerHTML = html;
     linkMarkdownToSourceBlocks(task);
+    renderedMarkdownKey = markdownKey;
     renderMathWhenReady(els.markdownView);
+    warmJsonResultCache(task);
+}
+
+function renderJsonResult(task, { defer = false } = {}) {
+    const key = resultDataKey(task);
+    if (renderedJsonKey === key) {
+        renderVisibleJsonLines();
+        return;
+    }
+
+    const render = () => {
+        cacheJsonLines(JSON.stringify(toOfficialJson(task), null, 2));
+        renderedJsonKey = key;
+        els.jsonView.scrollTop = 0;
+        renderVisibleJsonLines();
+    };
+
+    if (!defer) {
+        render();
+        return;
+    }
+
+    const token = ++jsonRenderToken;
+    renderVisibleJsonLines();
+    requestAnimationFrame(() => {
+        if (token !== jsonRenderToken || activeResultView !== 'json' || getActiveTask()?.id !== task.id) return;
+        render();
+    });
+}
+
+function warmJsonResultCache(task) {
+    const key = resultDataKey(task);
+    if (renderedJsonKey === key || !task?.ocrResults?.length) return;
+
+    const warm = () => {
+        if (renderedJsonKey === key || activeResultView === 'json' || getActiveTask()?.id !== task.id) return;
+        cacheJsonLines(JSON.stringify(toOfficialJson(task), null, 2));
+        renderedJsonKey = key;
+    };
+
+    if (window.requestIdleCallback) {
+        requestIdleCallback(warm, { timeout: 1200 });
+    } else {
+        setTimeout(warm, 80);
+    }
+}
+
+function cacheJsonLines(text) {
+    cachedJsonLines = String(text || '').split('\n');
+    cachedJsonMaxLineLength = cachedJsonLines.reduce((max, line) => Math.max(max, line.length), 0);
+}
+
+function ensureJsonVirtualDom() {
+    let spacer = els.jsonView.querySelector('.json-virtual-spacer');
+    let lines = els.jsonView.querySelector('.json-virtual-lines');
+    if (spacer && lines) return { spacer, lines };
+
+    els.jsonView.textContent = '';
+    spacer = document.createElement('div');
+    spacer.className = 'json-virtual-spacer';
+    lines = document.createElement('code');
+    lines.className = 'json-virtual-lines';
+    els.jsonView.append(spacer, lines);
+    return { spacer, lines };
+}
+
+function renderVisibleJsonLines() {
+    if (!cachedJsonLines.length) {
+        els.jsonView.textContent = '';
+        return;
+    }
+
+    const { spacer, lines } = ensureJsonVirtualDom();
+    const totalHeight = cachedJsonLines.length * JSON_LINE_HEIGHT + JSON_PADDING_TOP + JSON_PADDING_BOTTOM;
+    spacer.style.height = `${totalHeight}px`;
+    spacer.style.width = `calc(${Math.max(cachedJsonMaxLineLength, 1)}ch + ${JSON_PADDING_LEFT + JSON_PADDING_RIGHT}px)`;
+
+    const viewportHeight = els.jsonView.clientHeight || 1;
+    const firstVisibleLine = Math.max(0, Math.floor((els.jsonView.scrollTop - JSON_PADDING_TOP) / JSON_LINE_HEIGHT));
+    const visibleLineCount = Math.ceil(viewportHeight / JSON_LINE_HEIGHT) + JSON_OVERSCAN_LINES * 2;
+    const start = Math.max(0, firstVisibleLine - JSON_OVERSCAN_LINES);
+    const end = Math.min(cachedJsonLines.length, start + visibleLineCount);
+
+    lines.style.transform = `translateY(${JSON_PADDING_TOP + start * JSON_LINE_HEIGHT}px)`;
+    lines.textContent = cachedJsonLines.slice(start, end).join('\n');
 }
 
 async function processActiveTask() {
