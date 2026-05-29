@@ -40,6 +40,7 @@ static/ocr_images/*
 !static/ocr_images/.gitkeep
 model_cache/
 model_cache_ocr/
+data/tasks/
 ocr_results_*.md
 ocr_results_*.zip
 *.log

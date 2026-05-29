@@ -6,6 +6,8 @@ import tempfile
 import shutil
 import io
 import json
+import re
+from pathlib import Path
 from PIL import Image
 from typing import List, Optional, Union
 from fastapi import FastAPI, HTTPException, File, UploadFile, Request
@@ -27,6 +29,7 @@ app.add_middleware(
 PADDLE_SERVICE_URL = os.getenv("PADDLE_SERVICE_URL", "http://localhost:8081/layout-parsing")
 PADDLEOCR_VL_MODEL_NAME = os.getenv("PADDLEOCR_VL_MODEL_NAME", "PaddleOCR-VL-1.6-0.9B")
 PADDLE_REQUEST_TIMEOUT = float(os.getenv("PADDLE_REQUEST_TIMEOUT", "3600"))
+TASK_DATA_DIR = Path(os.getenv("PANDOCR_TASK_DATA_DIR", "data/tasks")).resolve()
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -40,6 +43,65 @@ async def read_root():
 async def get_models():
     """Return the active OCR model for frontend display."""
     return {"data": [{"id": PADDLEOCR_VL_MODEL_NAME}]}
+
+
+def safe_task_id(task_id: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,80}", task_id or ""):
+        raise HTTPException(status_code=400, detail="Invalid task id")
+    return task_id
+
+
+def task_file_path(task_id: str) -> Path:
+    return TASK_DATA_DIR / safe_task_id(task_id) / "task.json"
+
+
+@app.get("/api/tasks")
+async def list_tasks():
+    """List locally persisted document parsing tasks."""
+    TASK_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    tasks = []
+    for path in TASK_DATA_DIR.glob("*/task.json"):
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                tasks.append(json.load(f))
+        except (OSError, json.JSONDecodeError) as err:
+            print(f"Skipping invalid task file {path}: {err}")
+    tasks.sort(key=lambda item: item.get("updatedAt", 0), reverse=True)
+    return {"tasks": tasks}
+
+
+@app.put("/api/tasks/{task_id}")
+async def save_task(task_id: str, request: Request):
+    """Persist one task to the local project data directory."""
+    task = await request.json()
+    if task.get("id") != task_id:
+        raise HTTPException(status_code=400, detail="Task id mismatch")
+
+    path = task_file_path(task_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(".json.tmp")
+    with temp_path.open("w", encoding="utf-8") as f:
+        json.dump(task, f, ensure_ascii=False)
+    temp_path.replace(path)
+    return {"ok": True}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: str):
+    """Delete one locally persisted task."""
+    path = task_file_path(task_id)
+    if path.parent.exists():
+        shutil.rmtree(path.parent)
+    return {"ok": True}
+
+
+@app.delete("/api/tasks")
+async def clear_tasks():
+    """Delete all locally persisted tasks."""
+    if TASK_DATA_DIR.exists():
+        shutil.rmtree(TASK_DATA_DIR)
+    TASK_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return {"ok": True}
 
 
 @app.post("/api/convert/to-pdf")
@@ -277,7 +339,11 @@ def parse_pipeline_response(data: dict, image_prefix: str = "") -> dict:
                     all_images[key] = img_base64
             full_markdown += md_text + "\n\n"
 
-    return {"markdown": full_markdown, "images": all_images}
+    return {
+        "markdown": full_markdown,
+        "images": all_images,
+        "layoutParsingResults": results,
+    }
 
 
 async def run_ocr_request(ocr_request: OCRRequest, raw_input: RawOCRInput) -> dict:

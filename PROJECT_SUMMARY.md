@@ -15,7 +15,7 @@ Browser
 
 服务职责：
 
-- `pandocr-web`：提供前端页面、FastAPI 代理、Office 转 PDF、结果格式整理。
+- `pandocr-web`：提供前端页面、FastAPI 代理、Office 转 PDF、本地任务持久化和结果格式整理。
 - `paddleocr-vl-api`：官方 PaddleX layout-parsing 服务。
 - `paddleocr-vlm-server`：官方 VLLM 推理服务，模型为 `PaddleOCR-VL-1.6-0.9B`。
 
@@ -34,6 +34,10 @@ Browser
 | --- | --- | --- |
 | `/` | GET | WebUI 首页 |
 | `/api/models` | GET | 返回当前模型名 |
+| `/api/tasks` | GET | 返回本机持久化任务列表 |
+| `/api/tasks/{task_id}` | PUT | 保存一个本地任务 |
+| `/api/tasks/{task_id}` | DELETE | 删除一个本地任务 |
+| `/api/tasks` | DELETE | 清空本地任务历史 |
 | `/api/convert/to-pdf` | POST | Office 文件转 PDF |
 | `/api/paddleocr-vl-1.6` | POST | OCR 代理接口 |
 
@@ -41,11 +45,11 @@ Browser
 
 1. 上传图片、PDF 或 Office 文件。
 2. Office 文件先请求 `/api/convert/to-pdf` 转成 PDF。
-3. PDF 使用 PDF.js 生成缩略图，使用 PDF-lib 按 200 页一批切分请求体。
+3. PDF 使用 PDF.js 生成预览，使用 PDF-lib 按页切分请求体。
 4. 请求 `/api/paddleocr-vl-1.6`。
-5. 预览区使用 Marked + DOMPurify 渲染 Markdown。
+5. 原始 PaddleOCR-VL JSON 会保留到任务数据中，Markdown 预览直接使用模型返回的原始 Markdown。
 6. 使用 KaTeX 渲染数学公式。
-7. 将 OCR 结果中的字面量 `\n`、`\r\n`、`\t` 规范化为真实换行和制表符。
+7. 将 OCR 结果中的字面量 `\n`、`\r\n` 规范化为真实换行。
 8. 下载时合并 Markdown 和提取图片。
 
 ## 关键配置
@@ -60,7 +64,7 @@ PADDLEOCR_VL_MODEL_NAME=PaddleOCR-VL-1.6-0.9B
 PADDLE_REQUEST_TIMEOUT=3600
 ```
 
-`PADDLE_REQUEST_TIMEOUT` 建议保持较大值，因为 200 页 PDF 批处理可能需要较长时间。
+`PADDLE_REQUEST_TIMEOUT` 建议保持较大值，大 PDF 按页处理时整体耗时仍可能较长。
 
 ## 主要文件
 
@@ -69,6 +73,7 @@ PADDLE_REQUEST_TIMEOUT=3600
 - `static/index.html`：页面结构和前端依赖。
 - `static/style.css`：界面样式、表格和公式预览样式。
 - `static/vendor/katex/`：本地 KaTeX 运行时资源。
+- `data/tasks/`：本地任务数据目录，已加入 `.gitignore`。
 - `Dockerfile`：Web 容器镜像，只包含 Web、FastAPI、LibreOffice 依赖。
 - `docker-compose.yml`：三服务编排。
 - `pipeline_config_vllm.yaml`：PaddleOCR-VL API pipeline 配置。

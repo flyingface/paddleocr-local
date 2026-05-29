@@ -3,194 +3,174 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PandOCR - 智能文档解析</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <!-- PDF.js -->
+    <title>PandOCR - 文档解析工作台</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232f6df6'/%3E%3Ctext x='32' y='42' text-anchor='middle' font-family='Arial,sans-serif' font-size='34' font-weight='700' fill='white'%3EP%3C/text%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/style.css?v=11">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <!-- PDF-lib for splitting large PDFs into OCR batches -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-    <!-- Marked for Markdown preview -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.2/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
-    <!-- KaTeX for LaTeX/math rendering in OCR Markdown -->
     <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
     <script defer src="/static/vendor/katex/katex.min.js"></script>
     <script defer src="/static/vendor/katex/contrib/auto-render.min.js"></script>
-    <!-- Highlight.js for code blocks -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <!-- JSZip for creating zip files -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
-    <div class="app-container">
-        <header class="app-header">
-            <div class="logo">
-                <span class="icon">📄</span>
-                <h1>PandOCR</h1>
+    <div class="app-shell">
+        <header class="topbar">
+            <div class="brand">
+                <button class="icon-button" id="sidebar-toggle" title="切换侧边栏">
+                    <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+                </button>
+                <div class="brand-mark">P</div>
+                <div>
+                    <div class="brand-name">PandOCR</div>
+                    <div class="brand-subtitle">PaddleOCR-VL 文档解析</div>
+                </div>
             </div>
-            <div class="status-indicator">
-                <span id="model-status-dot" class="dot connecting"></span>
-                <span id="model-status-text">正在连接模型...</span>
+            <div class="topbar-actions">
+                <div class="model-pill">
+                    <span id="model-status-dot" class="dot connecting"></span>
+                    <span id="model-status-text">连接模型中...</span>
+                </div>
+                <button class="primary-button" id="top-upload-btn">
+                    <svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+                    上传解析
+                </button>
             </div>
         </header>
 
-        <main class="main-content">
-            <div class="two-column-layout">
-                <!-- Left Column: Upload & Controls -->
-                <div class="left-column">
-                    <section class="upload-section">
-                        <div id="drop-zone" class="drop-zone">
-                            <div class="drop-content">
-                                <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                    <polyline points="17 8 12 3 7 8"></polyline>
-                                    <line x1="12" y1="3" x2="12" y2="15"></line>
-                                </svg>
-                                <h2>拖放文件到此处</h2>
-                                <p class="sub-text">支持 PNG, JPG, JPEG, BMP, WEBP, TIFF, GIF, PDF, PPT, PPTX, DOC, DOCX 格式</p>
-                                <button id="browse-btn" class="btn primary-btn">选择文件</button>
-                                <input type="file" id="file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.bmp,.webp,.tiff,.tif,.gif,.ppt,.pptx,.doc,.docx" hidden>
-                            </div>
-                        </div>
-                    </section>
-
-                    <!-- OCR Options -->
-                    <section class="options-section">
-                        <h3>解析选项</h3>
-                        <div class="ocr-options-vertical">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="chart-recognition-switch" />
-                                <span>图表解析</span>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="doc-unwarping-switch" />
-                                <span>文档矫正</span>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="doc-orientation-switch" />
-                                <span>方向识别</span>
-                            </label>
-                            <hr class="options-divider">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="seal-recognition-switch" checked />
-                                <span>印章识别</span>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="format-content-switch" />
-                                <span>内容格式化</span>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="formula-number-switch" checked />
-                                <span>公式编号</span>
-                            </label>
-                            <hr class="options-divider">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="ignore-header-switch" checked />
-                                <span>忽略页眉</span>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="ignore-footer-switch" checked />
-                                <span>忽略页脚</span>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="ignore-number-switch" checked />
-                                <span>忽略页码</span>
-                            </label>
-                        </div>
-                        <button id="start-btn" class="btn primary-btn full-width">开始解析</button>
-                    </section>
-
-                    <!-- Processing Queue (Left Column, Vertical) -->
-                    <section id="processing-queue" class="queue-section-vertical hidden">
-                        <div class="queue-header-vertical">
-                            <h3>📋 处理队列</h3>
-                            <div class="queue-header-actions">
-                                <span id="progress-text" class="progress-badge">0/0</span>
-                                <button id="clear-all-btn" class="btn text-btn-small">清空</button>
-                            </div>
-                        </div>
-                        <div id="queue-list" class="queue-list-vertical">
-                            <!-- Queue items will appear here -->
-                        </div>
-                    </section>
-                </div>
-
-                <!-- Right Column: Results -->
-                <div class="right-column">
-                    <section class="results-section">
-                        <div class="section-header">
-                            <h3>转换结果</h3>
-                            <button id="download-all-btn" class="btn primary-btn">
-                                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                    <polyline points="7 10 12 15 17 10"></polyline>
-                                    <line x1="12" y1="15" x2="12" y2="3"></line>
-                                </svg>
-                                下载
-                            </button>
-                        </div>
-                        <div id="results-container" class="results-container">
-                            <div class="empty-state">
-                                <svg viewBox="0 0 24 24" width="48" height="48" stroke="currentColor" stroke-width="1.5" fill="none">
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                                    <polyline points="14 2 14 8 20 8"></polyline>
-                                    <line x1="16" y1="13" x2="8" y2="13"></line>
-                                    <line x1="16" y1="17" x2="8" y2="17"></line>
-                                    <polyline points="10 9 9 9 8 9"></polyline>
-                                </svg>
-                                <p>上传文件后，解析结果将在此显示</p>
-                            </div>
-                        </div>
-                    </section>
-                </div>
-            </div>
-        </main>
-
-        <footer>
-            <p>基于 PaddleOCR-VL & VLLM 构建</p>
-        </footer>
-    </div>
-
-    <!-- Templates -->
-    <template id="queue-item-template">
-        <div class="queue-item">
-            <div class="file-icon">
-                <img src="" alt="缩略图" class="thumbnail">
-            </div>
-            <div class="file-info">
-                <div class="file-name">document.pdf</div>
-                <div class="progress-bar-container">
-                    <div class="progress-bar"></div>
-                </div>
-                <div class="file-status">等待</div>
-            </div>
-        </div>
-    </template>
-
-    <template id="result-card-template">
-        <div class="result-card">
-            <div class="card-header">
-                <span class="page-number">第 1 页</span>
-                <div class="card-actions">
-                    <button class="btn icon-btn copy-btn" title="复制 Markdown">
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        <div class="workspace">
+            <aside class="sidebar" id="sidebar">
+                <div class="sidebar-actions">
+                    <button class="new-task-button" id="new-task-btn">
+                        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                        新解析
                     </button>
                 </div>
-            </div>
-            <div class="card-body">
-                <div class="preview-split">
-                    <div class="image-preview">
-                        <img src="" alt="原始图片">
+
+                <details class="settings-panel">
+                    <summary>
+                        <span>
+                            <svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05a2.1 2.1 0 1 1-2.97 2.97l-.05-.05a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21a2.1 2.1 0 1 1-4.2 0v-.08a1.8 1.8 0 0 0-1.1-1.66 1.8 1.8 0 0 0-1.98.36l-.05.05a2.1 2.1 0 1 1-2.97-2.97l.05-.05A1.8 1.8 0 0 0 4.6 15a1.8 1.8 0 0 0-1.66-1.1H3a2.1 2.1 0 1 1 0-4.2h.08A1.8 1.8 0 0 0 4.74 8.6a1.8 1.8 0 0 0-.36-1.98l-.05-.05A2.1 2.1 0 1 1 7.3 3.6l.05.05a1.8 1.8 0 0 0 1.98.36A1.8 1.8 0 0 0 10.42 2.35V2a2.1 2.1 0 1 1 4.2 0v.08a1.8 1.8 0 0 0 1.1 1.66 1.8 1.8 0 0 0 1.98-.36l.05-.05a2.1 2.1 0 1 1 2.97 2.97l-.05.05a1.8 1.8 0 0 0-.36 1.98 1.8 1.8 0 0 0 1.66 1.1H22a2.1 2.1 0 1 1 0 4.2h-.08A1.8 1.8 0 0 0 19.4 15Z"/></svg>
+                            解析设置
+                        </span>
+                    </summary>
+                    <div class="settings-grid">
+                        <label><input type="checkbox" id="chart-recognition-switch"> 图表解析</label>
+                        <label><input type="checkbox" id="doc-unwarping-switch"> 文档矫正</label>
+                        <label><input type="checkbox" id="doc-orientation-switch"> 方向识别</label>
+                        <label><input type="checkbox" id="seal-recognition-switch" checked> 印章识别</label>
+                        <label><input type="checkbox" id="format-content-switch"> 内容格式化</label>
+                        <label><input type="checkbox" id="formula-number-switch" checked> 公式编号</label>
+                        <label><input type="checkbox" id="ignore-header-switch" checked> 忽略页眉</label>
+                        <label><input type="checkbox" id="ignore-footer-switch" checked> 忽略页脚</label>
+                        <label><input type="checkbox" id="ignore-number-switch" checked> 忽略页码</label>
                     </div>
-                    <div class="markdown-preview">
-                        <!-- Rendered Markdown -->
-                    </div>
+                </details>
+
+                <div class="task-tabs">
+                    <button class="task-tab active" data-filter="all">最近上传</button>
+                    <button class="task-tab" data-filter="done">已完成</button>
                 </div>
-            </div>
+                <div class="task-tools">
+                    <div class="search-box">
+                        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                        <input id="task-search" placeholder="搜索文件">
+                    </div>
+                    <button class="icon-button danger" id="clear-history-btn" title="清空历史">
+                        <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15"/></svg>
+                    </button>
+                </div>
+                <div class="task-list" id="task-list"></div>
+            </aside>
+
+            <main class="document-workbench">
+                <section class="source-pane">
+                    <div class="pane-header">
+                        <div>
+                            <div class="pane-kicker">源文件</div>
+                            <h2 id="source-title">等待上传文件</h2>
+                        </div>
+                        <div class="source-meta" id="source-meta">PDF、图片、Office 文档</div>
+                    </div>
+                    <div class="source-viewer" id="source-viewer">
+                        <div class="drop-zone" id="drop-zone">
+                            <svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+                            <h3>拖拽文件到这里</h3>
+                            <p>支持 PDF、图片、PPT/PPTX、DOC/DOCX；PDF 会逐页解析。</p>
+                            <button class="primary-button" id="browse-btn">选择文件</button>
+                        </div>
+                    </div>
+                    <div class="pdf-controls hidden" id="pdf-controls">
+                        <button class="icon-button" id="prev-page-btn" title="上一页">
+                            <svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
+                        </button>
+                        <span id="page-indicator">1 / 1</span>
+                        <button class="icon-button" id="next-page-btn" title="下一页">
+                            <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+                        </button>
+                        <button class="icon-button" id="zoom-out-btn" title="缩小">
+                            <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+                        </button>
+                        <button class="icon-button" id="zoom-in-btn" title="放大">
+                            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                        </button>
+                    </div>
+                </section>
+
+                <section class="result-pane">
+                    <div class="pane-header result-header">
+                        <div>
+                            <div class="pane-kicker">解析模型 <span class="model-name" id="active-model-name">PaddleOCR-VL-1.6</span></div>
+                            <h2 id="result-title">解析结果</h2>
+                        </div>
+                        <div class="result-actions">
+                            <button class="secondary-button" id="start-btn">
+                                <svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg>
+                                开始解析
+                            </button>
+                            <button class="icon-button" id="copy-btn" title="复制 Markdown">
+                                <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            </button>
+                            <button class="icon-button" id="download-btn" title="下载结果">
+                                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="view-tabs">
+                        <button class="view-tab active" data-view="markdown">文档解析</button>
+                        <button class="view-tab" data-view="json">JSON</button>
+                    </div>
+                    <div class="result-viewer">
+                        <div class="markdown-preview" id="markdown-view">
+                            <div class="empty-result">选择左侧任务，或上传一个新文件开始解析。</div>
+                        </div>
+                        <pre class="json-preview hidden" id="json-view"></pre>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <input type="file" id="file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.bmp,.webp,.tiff,.tif,.gif,.ppt,.pptx,.doc,.docx" hidden>
+    </div>
+
+    <template id="task-item-template">
+        <div class="task-item" role="button" tabindex="0">
+            <span class="task-icon"></span>
+            <span class="task-main">
+                <span class="task-name"></span>
+                <span class="task-meta"></span>
+            </span>
+            <span class="task-state"></span>
+            <button class="task-delete" type="button" title="删除任务" aria-label="删除任务">
+                <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>
+            </button>
         </div>
     </template>
 
-    <script src="/static/app.js?v=7"></script>
+    <script charset="UTF-8" src="/static/app.js?v=24"></script>
 </body>
 </html>

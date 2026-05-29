@@ -11,6 +11,7 @@
 | `pandocr-web` | WebUI、FastAPI 代理、Office 转 PDF | `8000:8000` |
 
 rerank/reranker 服务已移除。Web 容器也不再挂载 Docker socket，不提供容器启停接口。
+解析历史会通过 `./data:/app/data` 挂载保存到宿主机，默认路径为 `data/tasks/`。
 
 ## 推荐配置
 
@@ -66,6 +67,12 @@ docker compose --env-file env.txt up -d --no-deps --force-recreate pandocr-web
 ```powershell
 docker compose --env-file env.txt up -d --no-deps --force-recreate pandocr-web
 ```
+
+## 本地任务数据
+
+解析完成的任务会保存到 `data/tasks/`。这个目录已经加入 `.gitignore`，不会随代码提交。
+
+如需清空历史，可以在 WebUI 侧边栏点击清空按钮，或删除本机目录后重启 Web 服务。
 
 ## 日志
 

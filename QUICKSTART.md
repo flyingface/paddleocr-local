@@ -47,9 +47,10 @@ curl http://localhost:8081/health
 打开 http://localhost:8000。
 
 - 图片会直接作为图片请求提交。
-- PDF 会按 200 页一批提交。
+- PDF 会按页提交，任务完成后会保留每页原始 JSON，方便和官方在线结果核对。
 - PPT/PPTX/DOC/DOCX 会先由 `pandocr-web` 调 LibreOffice 转 PDF，再进入 PDF 流程。
 - 结果区会渲染 Markdown、表格和 KaTeX 公式，并修正 OCR 结果里字面量 `\n` 导致的不换行问题。
+- 历史任务会保存到本机 `data/tasks/`，侧边栏删除按钮会同时删除对应本地记录。
 
 ## 常见问题
 
