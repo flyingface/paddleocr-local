@@ -1,7 +1,7 @@
 @echo off
-REM PandOCR 连接测试脚本 (Windows)
+REM PaddleOCR Local 连接测试脚本 (Windows)
 
-echo 🔍 测试 PandOCR 服务连接...
+echo 🔍 测试 PaddleOCR Local 服务连接...
 echo.
 
 REM 测试前端服务

@@ -45,7 +45,7 @@ stop_pid_file() {
   rm -f "$pid_file"
 }
 
-stop_pid_file run/pandocr-web.pid "PandOCR Web service" "server.py"
+stop_pid_file run/pandocr-web.pid "PaddleOCR Local Web service" "server.py"
 stop_pid_file run/paddlex.pid "PaddleX service" "paddlex --serve"
 stop_pid_file run/mlx-vlm.pid "MLX-VLM service" "mlx_vlm.server"
 

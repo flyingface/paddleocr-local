@@ -24,7 +24,7 @@ step() {
 
 fail_with_logs() {
   local exit_code=$?
-  printf "\nPandOCR macOS one-click deployment failed.\n"
+  printf "\nPaddleOCR Local macOS one-click deployment failed.\n"
   printf "Useful logs:\n"
   printf "  logs/pandocr-web.log\n"
   printf "  logs/paddlex.log\n"
@@ -106,7 +106,7 @@ run_setup_if_needed() {
 }
 
 start_services() {
-  step "Starting PandOCR services"
+  step "Starting PaddleOCR Local services"
   PANDOCR_MACOS_BACKEND="$PANDOCR_MACOS_BACKEND" \
   PANDOCR_HOST="$PANDOCR_HOST" \
   PANDOCR_PORT="$PANDOCR_PORT" \
@@ -131,7 +131,7 @@ test_services() {
 
 open_browser() {
   if truthy "$PANDOCR_OPEN_BROWSER" && command -v open >/dev/null 2>&1; then
-    step "Opening PandOCR in your browser"
+    step "Opening PaddleOCR Local in your browser"
     open "$WEB_URL"
   fi
 }
@@ -150,7 +150,7 @@ case "$PANDOCR_MACOS_BACKEND" in
     ;;
 esac
 
-step "PandOCR macOS one-click deployment"
+step "PaddleOCR Local macOS one-click deployment"
 echo "Backend: $PANDOCR_MACOS_BACKEND"
 echo "WebUI: $WEB_URL"
 
@@ -159,5 +159,5 @@ start_services
 test_services
 open_browser
 
-printf "\nPandOCR is ready: %s\n" "$WEB_URL"
+printf "\nPaddleOCR Local is ready: %s\n" "$WEB_URL"
 printf "Stop services with: make mac-down\n"

@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Building PandOCR Docker images..."
+echo "Building PaddleOCR Local Docker images..."
 
 if ! docker info > /dev/null 2>&1; then
     echo "Docker is not running. Please start Docker first."

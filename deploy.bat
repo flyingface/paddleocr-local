@@ -1,7 +1,7 @@
 @echo off
-REM Deploy PandOCR with Docker Compose (Windows)
+REM Deploy PaddleOCR Local with Docker Compose (Windows)
 
-echo Deploying PandOCR...
+echo Deploying PaddleOCR Local...
 
 if not exist "env.txt" (
     echo env.txt does not exist. Run build.bat or create the env file first.

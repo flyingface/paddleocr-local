@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# PandOCR 连接测试脚本
+# PaddleOCR Local 连接测试脚本
 
-echo "🔍 测试 PandOCR 服务连接..."
+echo "🔍 测试 PaddleOCR Local 服务连接..."
 echo ""
 
 # 测试前端服务

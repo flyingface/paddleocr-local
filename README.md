@@ -1,8 +1,8 @@
-# PandOCR - PaddleOCR-VL 1.6 WebUI
+# PaddleOCR Local - PaddleOCR-VL & PP-OCRv6 WebUI
 
 **Language / 语言**: English | [简体中文](README.zh-CN.md)
 
-PandOCR is a lightweight Web frontend for PaddleOCR-VL and PP-OCRv6. The frontend handles file upload, queueing, preview, model switching, and download, while the FastAPI backend serves static files, converts Office files to PDF, and proxies requests. OCR inference runs in separate PaddleOCR services. The NVIDIA path uses official Docker services, and the macOS Apple Silicon path uses local PaddleX/MLX services.
+PaddleOCR Local is a lightweight Web frontend for PaddleOCR-VL and PP-OCRv6. The frontend handles file upload, queueing, preview, model switching, and download, while the FastAPI backend serves static files, converts Office files to PDF, and proxies requests. OCR inference runs in separate PaddleOCR services. The NVIDIA path uses official Docker services, and the macOS Apple Silicon path uses local PaddleX/MLX services.
 
 ## Current Architecture
 
@@ -167,7 +167,7 @@ Equivalent Make command:
 make mac-one-click
 ```
 
-This one-click command checks the Apple Silicon environment, installs macOS dependencies, enables MLX-VLM acceleration by default, starts `mlx_vlm.server` / PaddleX API / PandOCR WebUI, runs health checks, and opens http://127.0.0.1:8000 automatically.
+This one-click command checks the Apple Silicon environment, installs macOS dependencies, enables MLX-VLM acceleration by default, starts `mlx_vlm.server` / PaddleX API / PaddleOCR Local WebUI, runs health checks, and opens http://127.0.0.1:8000 automatically.
 
 The first startup downloads `PP-DocLayoutV3`, `PaddleOCR-VL-1.6-0.9B`, and MLX model weights. The time required depends on network and disk speed. After the model cache is ready, subsequent runs of the same command reuse the installed environment and running services.
 
@@ -204,7 +204,7 @@ MLX mode starts three local services:
 
 - `mlx_vlm.server`: `127.0.0.1:8111`
 - PaddleX full parsing API: `127.0.0.1:8081`
-- PandOCR WebUI: `127.0.0.1:8000`
+- PaddleOCR Local WebUI: `127.0.0.1:8000`
 
 If Hugging Face downloads are slow, set `HF_TOKEN` to improve Hugging Face rate limits. Startup is much faster after models are cached. To change the MLX port, set `MLX_PORT`; the startup scripts generate the PaddleX configuration from the template.
 

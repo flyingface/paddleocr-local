@@ -10,7 +10,7 @@ PANDOCR_MACOS_BACKEND="${PANDOCR_MACOS_BACKEND:-native}"
 MLX_HOST="${MLX_HOST:-127.0.0.1}"
 MLX_PORT="${MLX_PORT:-8111}"
 
-echo "Testing PandOCR WebUI..."
+echo "Testing PaddleOCR Local WebUI..."
 curl -fsS "http://${PANDOCR_HOST}:${PANDOCR_PORT}/" >/dev/null
 echo "WebUI OK"
 

@@ -2,7 +2,7 @@
 
 # 默认目标
 help:
-	@echo "PandOCR - 可用命令:"
+	@echo "PaddleOCR Local - 可用命令:"
 	@echo ""
 	@echo "  make build      - 构建 NVIDIA Docker 镜像"
 	@echo "  make deploy     - 部署 NVIDIA Docker 服务"

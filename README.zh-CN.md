@@ -1,8 +1,8 @@
-# PandOCR - PaddleOCR-VL 1.6 WebUI
+# PaddleOCR Local - PaddleOCR-VL & PP-OCRv6 WebUI
 
 **语言 / Language**: [English](README.md) | 简体中文
 
-PandOCR 是一个面向 PaddleOCR-VL 和 PP-OCRv6 的轻量 Web 前端。前端负责文件上传、队列、预览、模型切换和下载，后端 FastAPI 做静态文件服务、Office 转 PDF 和请求代理；OCR 推理由独立 PaddleOCR 服务完成，NVIDIA 路线使用官方 Docker 服务，macOS Apple Silicon 路线使用本地 PaddleX/MLX 服务。
+PaddleOCR Local 是一个面向 PaddleOCR-VL 和 PP-OCRv6 的轻量 Web 前端。前端负责文件上传、队列、预览、模型切换和下载，后端 FastAPI 做静态文件服务、Office 转 PDF 和请求代理；OCR 推理由独立 PaddleOCR 服务完成，NVIDIA 路线使用官方 Docker 服务，macOS Apple Silicon 路线使用本地 PaddleX/MLX 服务。
 
 ## 当前架构
 
@@ -167,7 +167,7 @@ PaddleOCR-VL-1.6
 make mac-one-click
 ```
 
-这条一键命令会自动检查 Apple Silicon 环境、安装 macOS 依赖、默认启用 MLX-VLM 提速模式、启动 `mlx_vlm.server` / PaddleX API / PandOCR WebUI、执行健康检查，并自动打开 http://127.0.0.1:8000。
+这条一键命令会自动检查 Apple Silicon 环境、安装 macOS 依赖、默认启用 MLX-VLM 提速模式、启动 `mlx_vlm.server` / PaddleX API / PaddleOCR Local WebUI、执行健康检查，并自动打开 http://127.0.0.1:8000。
 
 首次启动会下载 `PP-DocLayoutV3`、`PaddleOCR-VL-1.6-0.9B` 和 MLX 模型权重，耗时取决于网络和磁盘速度。模型缓存完成后，后续再次运行同一条命令会复用已安装环境和已启动服务。
 
@@ -204,7 +204,7 @@ MLX 模式会启动三个本地服务：
 
 - `mlx_vlm.server`: `127.0.0.1:8111`
 - PaddleX 完整解析 API: `127.0.0.1:8081`
-- PandOCR WebUI: `127.0.0.1:8000`
+- PaddleOCR Local WebUI: `127.0.0.1:8000`
 
 若 Hugging Face 下载较慢，可以设置 `HF_TOKEN` 提高 Hugging Face 的限流额度；模型缓存完成后后续启动会快很多。如果要改 MLX 端口，直接设置 `MLX_PORT` 即可；启动脚本会从模板生成 PaddleX 使用的配置。
 

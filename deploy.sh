@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Deploying PandOCR..."
+echo "Deploying PaddleOCR Local..."
 
 if [ ! -f "env.txt" ]; then
     echo "env.txt does not exist. Run build.sh or create the env file first."

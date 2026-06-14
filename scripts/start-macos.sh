@@ -187,10 +187,10 @@ wait_for_http "http://${PADDLEX_HOST}:${PADDLEX_PORT}/health" "PaddleX service" 
 }
 
 if is_expected_process run/pandocr-web.pid "server.py"; then
-  echo "PandOCR Web service already running: $(cat run/pandocr-web.pid)"
+  echo "PaddleOCR Local Web service already running: $(cat run/pandocr-web.pid)"
 else
   rm -f run/pandocr-web.pid
-  echo "Starting PandOCR WebUI on ${PANDOCR_HOST}:${PANDOCR_PORT}"
+  echo "Starting PaddleOCR Local WebUI on ${PANDOCR_HOST}:${PANDOCR_PORT}"
   PADDLE_SERVICE_URL="http://${PADDLEX_HOST}:${PADDLEX_PORT}/layout-parsing" \
   PADDLEOCR_VL_MODEL_NAME="$PADDLEOCR_VL_MODEL_NAME" \
   PADDLE_REQUEST_TIMEOUT="$PADDLE_REQUEST_TIMEOUT" \
@@ -203,12 +203,12 @@ else
   echo $! > run/pandocr-web.pid
 fi
 
-wait_for_http "http://${PANDOCR_HOST}:${PANDOCR_PORT}/" "PandOCR Web service" || {
+wait_for_http "http://${PANDOCR_HOST}:${PANDOCR_PORT}/" "PaddleOCR Local Web service" || {
   tail -n 80 logs/pandocr-web.log || true
   exit 1
 }
 
-echo "PandOCR is ready."
+echo "PaddleOCR Local is ready."
 echo "WebUI: http://${PANDOCR_HOST}:${PANDOCR_PORT}"
 echo "PaddleOCR-VL API: http://${PADDLEX_HOST}:${PADDLEX_PORT}"
 if [[ "$PANDOCR_MACOS_BACKEND" == "mlx" ]]; then

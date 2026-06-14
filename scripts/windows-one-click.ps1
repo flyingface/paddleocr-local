@@ -238,6 +238,30 @@ function Test-HttpOk {
     }
 }
 
+function Get-ModelRuntimePayload {
+    try {
+        return Invoke-RestMethod -Uri "http://localhost:8000/api/model-runtime" -UseBasicParsing -TimeoutSec 5
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-RuntimeModelStatus {
+    param([object]$Runtime, [string]$ModelId)
+
+    if (-not $Runtime -or -not $Runtime.models) {
+        return $null
+    }
+
+    $property = $Runtime.models.PSObject.Properties[$ModelId]
+    if (-not $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
 function Get-ContainerStatus {
     param([string]$Name)
 
@@ -270,7 +294,7 @@ function Show-Diagnostics {
 function Wait-ForServices {
     param([int]$Timeout)
 
-    Write-Section "Waiting for WebUI and active model ($script:ActiveModel)"
+    Write-Section "Waiting for WebUI runtime and active model ($script:ActiveModel)"
     $deadline = (Get-Date).AddSeconds($Timeout)
     $lastLine = ""
 
@@ -282,21 +306,35 @@ function Wait-ForServices {
         $apiOk = Test-HttpOk "http://localhost:8081/health"
         $ocrOk = Test-HttpOk "http://localhost:8082/health"
         $webOk = Test-HttpOk "http://localhost:8000/"
+        $runtime = if ($webOk) { Get-ModelRuntimePayload } else { $null }
+        $activeRuntimeStatus = Get-RuntimeModelStatus -Runtime $runtime -ModelId $script:ActiveModel
+        $runtimeReady = [bool]($activeRuntimeStatus -and $activeRuntimeStatus.ready)
+        $runtimeState = if ($activeRuntimeStatus) { [string]$activeRuntimeStatus.state } else { "unavailable" }
+        $operationState = if ($runtime -and $runtime.operation) { [string]$runtime.operation.state } else { "unavailable" }
+        $operationTarget = if ($runtime -and $runtime.operation) { [string]$runtime.operation.targetModelId } else { "" }
 
-        $activeOk = $false
         $activeStatuses = @()
         if ($script:ActiveModel -eq "pp-ocrv6") {
-            $activeOk = $ocrOk
             $activeStatuses = @($ocr, $web)
         }
         else {
-            $activeOk = $apiOk
             $activeStatuses = @($vlm, $api, $web)
         }
 
-        if ($activeOk -and $webOk) {
-            Write-Ok "WebUI and $script:ActiveModel are healthy. The other model remains on standby."
+        if ($runtime -and -not $runtime.controlAvailable) {
+            Show-Diagnostics
+            throw "WebUI is running, but Docker model runtime control is not available."
+        }
+
+        if ($runtimeReady -and $webOk) {
+            Write-Ok "WebUI runtime reports $script:ActiveModel is ready. The other model remains on standby."
             return
+        }
+
+        if ($operationState -eq "error" -and ($operationTarget -eq "" -or $operationTarget -eq $script:ActiveModel)) {
+            Show-Diagnostics
+            $message = if ($runtime.operation.message) { [string]$runtime.operation.message } else { "Model runtime reported an error." }
+            throw $message
         }
 
         foreach ($status in $activeStatuses) {
@@ -306,7 +344,7 @@ function Wait-ForServices {
             }
         }
 
-        $line = "vlm=$vlm api=$api ocr=$ocr web=$web apiHttp=$apiOk ocrHttp=$ocrOk webHttp=$webOk"
+        $line = "vlm=$vlm api=$api ocr=$ocr web=$web apiHttp=$apiOk ocrHttp=$ocrOk webHttp=$webOk runtime=$runtimeState operation=$operationState"
         if ($line -ne $lastLine) {
             Write-Host $line
             $lastLine = $line
@@ -320,7 +358,7 @@ function Wait-ForServices {
 }
 
 try {
-    Write-Section "PandOCR Windows one-click deployment"
+    Write-Section "PaddleOCR Local Windows one-click deployment"
     Write-Host "Repository: $script:RepoRoot"
 
     Get-RequiredCommand -Name "docker" -InstallHint "Please install Docker Desktop and start it."
@@ -378,7 +416,7 @@ try {
     }
 
     Invoke-Checked -File "docker" -Arguments (Get-ComposeArgs @("run", "--rm", "--no-deps", "paddleocr-vlm-server", "nvidia-smi")) -Description "Checking Docker GPU access"
-    Invoke-Checked -File "docker" -Arguments (Get-ComposeArgs @("up", "-d", "--no-start", "--force-recreate")) -Description "Creating PandOCR containers"
+    Invoke-Checked -File "docker" -Arguments (Get-ComposeArgs @("up", "-d", "--no-start", "--force-recreate")) -Description "Creating PaddleOCR Local containers"
     Invoke-Checked -File "docker" -Arguments (Get-ComposeArgs @("start", "pandocr-web")) -Description "Starting WebUI and model runtime controller"
 
     Wait-ForServices -Timeout $TimeoutSeconds

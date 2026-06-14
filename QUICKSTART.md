@@ -47,7 +47,7 @@ NVIDIA 用户继续使用下面的 Docker 流程。
 .\windows-one-click.bat
 ```
 
-脚本会自动检查 Docker、识别 NVIDIA GPU、选择 `env.txt` 或 `env.docker`、拉取官方镜像、构建 `pandocr-web`、清理旧容器、启动服务并等待健康检查。失败时会自动打印 `paddleocr-vlm-server`、`paddleocr-vl-api` 和 `pandocr-web` 的关键日志。
+脚本会自动检查 Docker、识别 NVIDIA GPU、选择 `env.txt` 或 `env.docker`、拉取官方镜像、构建 `paddleocr-ocr-api` 和 `pandocr-web`、清理旧容器、创建全部容器但只启动 `pandocr-web`。随后由 WebUI 的模型运行时控制器按 `PANDOCR_ACTIVE_MODEL_ON_START` 启动当前活跃模型，并通过 `/api/model-runtime` 等待它进入 ready。失败时会自动打印 `paddleocr-vlm-server`、`paddleocr-vl-api`、`paddleocr-ocr-api` 和 `pandocr-web` 的关键日志。
 
 只做预检、不启动服务：
 

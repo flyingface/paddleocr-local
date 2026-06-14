@@ -1,7 +1,7 @@
 @echo off
-REM Build PandOCR Docker images (Windows)
+REM Build PaddleOCR Local Docker images (Windows)
 
-echo Building PandOCR Docker images...
+echo Building PaddleOCR Local Docker images...
 
 docker info >nul 2>&1
 if errorlevel 1 (
