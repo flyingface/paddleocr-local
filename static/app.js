@@ -6,6 +6,7 @@ const UNLIMITED_OCR_RECOMMENDED_PDF_BATCH_SIZE = 1;
 const UNLIMITED_OCR_COORDINATE_SIZE = 1000;
 const UNLIMITED_OCR_BACKENDS = ['transformers', 'sglang'];
 const STREAM_RENDER_MIN_INTERVAL_MS = 140;
+const STREAM_STATUS_MARKDOWN_RE = /^\s*\*\*Unlimited-OCR status\*\*/i;
 const PDF_BATCH_SIZE_STORAGE_KEY = 'pandocr.pdfBatchSize';
 const MODEL_STORAGE_KEY = 'pandocr.selectedModelId';
 const API_TOKEN_STORAGE_KEY = 'pandocr.apiToken';
@@ -1564,11 +1565,12 @@ function setActiveResultView(view) {
 
 function resultDataKey(task) {
     if (!task) return '';
+    const visibleMarkdown = visibleTaskMarkdown(task);
     return [
         task.id,
         task.status,
         task.updatedAt || 0,
-        task.markdown?.length || 0,
+        visibleMarkdown.length,
         task.ocrResults?.length || 0
     ].join(':');
 }
@@ -1699,7 +1701,7 @@ function renderResultPane(task, { deferJson = false, preserveScroll = true } = {
         return;
     }
 
-    const markdown = prepareMarkdownForRender(task.markdown || '');
+    const markdown = prepareMarkdownForRender(visibleTaskMarkdown(task));
     if (!markdown) {
         renderedOfficialLayoutContext = '';
         clearSourceHighlight();
@@ -2736,9 +2738,24 @@ function appendTaskMarkdown(task, markdown) {
     task.markdown += `${text}\n\n`;
 }
 
+function isStreamStatusMarkdown(markdown) {
+    return STREAM_STATUS_MARKDOWN_RE.test(String(markdown || ''));
+}
+
+function stripStreamStatusMarkdown(markdown) {
+    return String(markdown || '')
+        .replace(/(?:^|\n{2,})\s*\*\*Unlimited-OCR status\*\*\s*\n+\s*[^\n]*(?=\n{2,}|$)/gi, '\n\n')
+        .trim();
+}
+
+function visibleTaskMarkdown(task) {
+    return stripStreamStatusMarkdown(task?.markdown || '');
+}
+
 function rebuildTaskMarkdownFromBatches(task) {
     task.markdown = (task.batches || [])
         .map((batch) => String(batch.markdown || '').trim())
+        .filter((markdown) => markdown && !isStreamStatusMarkdown(markdown))
         .filter(Boolean)
         .join('\n\n');
     if (task.markdown) task.markdown += '\n\n';
@@ -2864,6 +2881,7 @@ async function callStreamingUnlimitedOCR(batch, task, formData, model) {
     let buffer = '';
     let finalResult = null;
     let lastMarkdown = '';
+    let lastMarkdownWasPlaceholder = false;
     let pendingStreamPosition = null;
     let streamRenderTimer = null;
     let lastStreamRenderAt = 0;
@@ -2901,10 +2919,19 @@ async function callStreamingUnlimitedOCR(batch, task, formData, model) {
         for (const line of lines) {
             const event = parseStreamingOCREvent(line);
             if (!event) continue;
+            if (event.type === 'status') {
+                batch._streamStatus = event.message || '';
+                continue;
+            }
             if (event.type === 'error') {
                 throw new Error(event.detail || 'Unlimited-OCR stream failed');
             }
             if (event.type === 'progress' && typeof event.markdown === 'string') {
+                const isPlaceholder = event.placeholder === true;
+                if (isPlaceholder) {
+                    batch._streamStatus = event.markdown;
+                    continue;
+                }
                 const prepared = prepareBatchResult(
                     { markdown: event.markdown, images: event.images || {} },
                     batch.id,
@@ -2918,6 +2945,7 @@ async function callStreamingUnlimitedOCR(batch, task, formData, model) {
                 }
                 if (prepared.markdown && (prepared.markdown !== lastMarkdown || hasNewImages)) {
                     lastMarkdown = prepared.markdown;
+                    lastMarkdownWasPlaceholder = isPlaceholder;
                     batch.markdown = prepared.markdown;
                     scheduleStreamRender(streamingSourcePosition(event, batch));
                 }
@@ -2931,6 +2959,9 @@ async function callStreamingUnlimitedOCR(batch, task, formData, model) {
     const tail = buffer.trim();
     if (tail) {
         const event = parseStreamingOCREvent(tail);
+        if (event?.type === 'status') {
+            batch._streamStatus = event.message || '';
+        }
         if (event?.type === 'error') {
             throw new Error(event.detail || 'Unlimited-OCR stream failed');
         }
@@ -2942,10 +2973,10 @@ async function callStreamingUnlimitedOCR(batch, task, formData, model) {
     flushStreamRender();
 
     if (!finalResult) {
-        if (lastMarkdown) {
+        if (lastMarkdown && !lastMarkdownWasPlaceholder) {
             return { markdown: lastMarkdown, images: {}, layoutParsingResults: [] };
         }
-        throw new Error(t('OCR 鏈嶅姟杩斿洖浜嗙┖鍝嶅簲锛岃闄嶄綆姣忔壒椤垫暟鍚庨噸璇曪細{label}', { label: batch.label || '' }));
+        throw new Error(t('OCR 服务返回了空响应，请降低每批页数后重试：{label}', { label: batch.label || '' }));
     }
     return finalResult;
 }
@@ -3020,6 +3051,9 @@ function taskForPersistence(task, { includeResults = true } = {}) {
     delete persisted.detailLoaded;
     delete persisted._storage;
     delete persisted._resultState;
+    if (includeResults && persisted.markdown) {
+        persisted.markdown = stripStreamStatusMarkdown(persisted.markdown);
+    }
     if (persisted.sourceUrl) {
         delete persisted.sourceDataUrl;
     }
@@ -3034,7 +3068,10 @@ function taskForPersistence(task, { includeResults = true } = {}) {
             const copy = { ...batch };
             delete copy.payloadBlob;
             delete copy.payloadDataUrl;
+            delete copy._streamStatus;
+            delete copy._streamImagePathMap;
             if (!includeResults) delete copy.markdown;
+            if (includeResults && isStreamStatusMarkdown(copy.markdown)) delete copy.markdown;
             return copy;
         })
         : [];
@@ -3042,7 +3079,7 @@ function taskForPersistence(task, { includeResults = true } = {}) {
 }
 
 function updateActionState(task) {
-    const hasResult = Boolean(task?.markdown) || Boolean(task?.ocrResults?.length);
+    const hasResult = Boolean(visibleTaskMarkdown(task)) || Boolean(task?.ocrResults?.length);
     const taskModel = task ? getTaskActionModel(task) : getSelectedModel();
     const modelReady = !task || isModelRuntimeReady(taskModel.id);
     const canStartAfterSwitch = task && !modelReady && canSwitchModelRuntime(taskModel.id);
@@ -3095,7 +3132,7 @@ function hasJsonResult(task) {
 
 function canCopyActiveResult(task) {
     if (activeResultView === 'json') return hasJsonResult(task);
-    return Boolean(task?.markdown);
+    return Boolean(visibleTaskMarkdown(task));
 }
 
 function copyButtonLabel() {
@@ -3115,7 +3152,8 @@ function activeResultCopyText(task) {
         if (!hasJsonResult(task)) return '';
         return JSON.stringify(toOfficialJson(task), null, 2);
     }
-    return task.markdown ? normalizeOCRMarkdown(task.markdown) : '';
+    const markdown = visibleTaskMarkdown(task);
+    return markdown ? normalizeOCRMarkdown(markdown) : '';
 }
 
 async function copyActiveResult() {
@@ -3142,7 +3180,7 @@ async function downloadActiveTask() {
         return;
     }
 
-    const markdown = normalizeOCRMarkdown(task.markdown);
+    const markdown = normalizeOCRMarkdown(visibleTaskMarkdown(task));
     const imageEntries = Object.entries(task.images || {});
     if (imageEntries.length === 0) {
         downloadBlob(new Blob([markdown], { type: 'text/markdown' }), safeDownloadName(task.name, 'md'));

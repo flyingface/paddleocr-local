@@ -29,13 +29,22 @@ def parse_bool_env(name: str, default: str = "0") -> bool:
 
 SGLANG_URL = os.getenv("UNLIMITED_OCR_SGLANG_URL", "http://unlimited-ocr-sglang:10000").rstrip("/")
 SERVED_MODEL_NAME = os.getenv("UNLIMITED_OCR_SERVED_MODEL_NAME", "Unlimited-OCR")
-SUPPORTED_BACKENDS = {"transformers", "sglang"}
+KNOWN_BACKENDS = {"transformers", "sglang"}
+SUPPORTED_BACKENDS = {
+    item.strip().lower()
+    for item in os.getenv("UNLIMITED_OCR_SUPPORTED_BACKENDS", "transformers,sglang").split(",")
+    if item.strip().lower() in KNOWN_BACKENDS
+} or {"transformers"}
 
 
 def normalize_backend(value: Any, fallback: str = "transformers") -> str:
     backend = str(value or fallback).strip().lower()
     if backend not in SUPPORTED_BACKENDS:
-        raise HTTPException(status_code=400, detail="Unsupported Unlimited-OCR backend. Use transformers or sglang.")
+        fallback_backend = str(fallback or "").strip().lower()
+        if fallback_backend in SUPPORTED_BACKENDS:
+            return fallback_backend
+        supported = ", ".join(sorted(SUPPORTED_BACKENDS))
+        raise HTTPException(status_code=400, detail=f"Unsupported Unlimited-OCR backend. Use one of: {supported}.")
     return backend
 
 
@@ -69,6 +78,14 @@ NO_REPEAT_NGRAM_SIZE = int(os.getenv("UNLIMITED_OCR_NO_REPEAT_NGRAM_SIZE", "35")
 SINGLE_NGRAM_WINDOW = int(os.getenv("UNLIMITED_OCR_SINGLE_NGRAM_WINDOW", "128"))
 MULTI_NGRAM_WINDOW = int(os.getenv("UNLIMITED_OCR_MULTI_NGRAM_WINDOW", "1024"))
 MAX_TOKENS = int(os.getenv("UNLIMITED_OCR_MAX_TOKENS", "32768"))
+STREAM_HEARTBEAT_SECONDS = float(os.getenv("UNLIMITED_OCR_STREAM_HEARTBEAT_SECONDS", "20"))
+TRANSFORMERS_SINGLE_BASE_SIZE = int(os.getenv("UNLIMITED_OCR_TRANSFORMERS_SINGLE_BASE_SIZE", "1024"))
+TRANSFORMERS_SINGLE_IMAGE_SIZE = int(os.getenv("UNLIMITED_OCR_TRANSFORMERS_SINGLE_IMAGE_SIZE", "640"))
+TRANSFORMERS_MPS_OOM_RETRY = parse_bool_env("UNLIMITED_OCR_TRANSFORMERS_MPS_OOM_RETRY", "1")
+TRANSFORMERS_MPS_OOM_RETRY_IMAGE_SIZE = int(os.getenv("UNLIMITED_OCR_TRANSFORMERS_MPS_OOM_RETRY_IMAGE_SIZE", "640"))
+TRANSFORMERS_MPS_OOM_RETRY_MAX_TOKENS = int(
+    os.getenv("UNLIMITED_OCR_TRANSFORMERS_MPS_OOM_RETRY_MAX_TOKENS", str(min(MAX_TOKENS, 4096)))
+)
 SGLANG_MAX_TOKENS = int(os.getenv("UNLIMITED_OCR_SGLANG_MAX_TOKENS", str(max(1, MAX_TOKENS - 4096))))
 SGLANG_CONTEXT_TOKEN_RESERVE = int(os.getenv("UNLIMITED_OCR_SGLANG_CONTEXT_TOKEN_RESERVE", "128"))
 ENABLE_DEGENERATION_GUARD = os.getenv("UNLIMITED_OCR_ENABLE_DEGENERATION_GUARD", "1").strip().lower() not in {
@@ -94,6 +111,9 @@ DEFAULT_NO_REPEAT_PROCESSOR_STR = (
     or '{"callable": "80049559000000000000008c2a73676c616e672e7372742e73616d706c696e672e637573746f6d5f6c6f6769745f70726f636573736f72948c26446565707365656b4f43524e6f5265706561744e4772616d4c6f67697450726f636573736f729493942e"}'
 )
 PRELOAD_TRANSFORMERS = DEFAULT_BACKEND == "transformers" and parse_bool_env("UNLIMITED_OCR_PRELOAD", "1")
+TRANSFORMERS_DEVICE = os.getenv("UNLIMITED_OCR_TRANSFORMERS_DEVICE", "auto").strip().lower()
+TRANSFORMERS_DTYPE = os.getenv("UNLIMITED_OCR_TRANSFORMERS_DTYPE", "auto").strip().lower()
+TRANSFORMERS_ATTENTION_IMPLEMENTATION = os.getenv("UNLIMITED_OCR_ATTENTION_IMPLEMENTATION", "").strip()
 
 NO_REPEAT_PROCESSOR_STR: str | None = None
 TRANSFORMERS_TOKENIZER = None
@@ -103,6 +123,59 @@ TRANSFORMERS_INFERENCE_LOCK = asyncio.Lock()
 TRANSFORMERS_MODEL_LOADING = False
 TRANSFORMERS_MODEL_ERROR: str | None = None
 TRANSFORMERS_MODEL_LOADED_AT: float | None = None
+TRANSFORMERS_RUNTIME: dict[str, Any] = {}
+
+
+def cleanup_torch_accelerator_cache() -> None:
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            with contextlib.suppress(Exception):
+                torch.cuda.ipc_collect()
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            with contextlib.suppress(Exception):
+                torch.mps.empty_cache()
+    except Exception:
+        logger.debug("Torch accelerator cache cleanup skipped", exc_info=True)
+
+
+def transformers_runtime_label() -> str:
+    device = TRANSFORMERS_RUNTIME.get("device") or TRANSFORMERS_DEVICE or "auto"
+    dtype = TRANSFORMERS_RUNTIME.get("dtype") or TRANSFORMERS_DTYPE or "auto"
+    return f"{device}/{dtype}"
+
+
+def transformers_status_markdown(message: str) -> str:
+    return f"**Unlimited-OCR status**\n\n{message}"
+
+
+def is_accelerator_oom(error: BaseException) -> bool:
+    detail = str(error).lower()
+    return "out of memory" in detail or "mps backend out of memory" in detail
+
+
+def transformers_error_detail(error: BaseException) -> str:
+    global TRANSFORMERS_MODEL_ERROR
+    detail = str(error) or error.__class__.__name__
+    TRANSFORMERS_MODEL_ERROR = detail
+
+    if is_accelerator_oom(error):
+        cleanup_torch_accelerator_cache()
+        if "mps" in detail.lower():
+            return (
+                "Unlimited-OCR Transformers ran out of Apple Silicon MPS memory. "
+                f"Current settings: PDF_DPI={PDF_DPI}, MAX_TOKENS={MAX_TOKENS}. "
+                "Retry the batch after lowering UNLIMITED_OCR_PDF_DPI or UNLIMITED_OCR_MAX_TOKENS. "
+                f"Original error: {detail}"
+            )
+        return f"Unlimited-OCR Transformers ran out of accelerator memory. Original error: {detail}"
+
+    return detail
 
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -248,9 +321,43 @@ def encode_image_content(image_bytes: bytes, mime: str = "image/png") -> dict:
     return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
 
 
+def select_transformers_device(torch_module) -> str:
+    requested = TRANSFORMERS_DEVICE
+    if requested in {"cuda", "mps", "cpu"}:
+        if requested == "cuda" and not torch_module.cuda.is_available():
+            raise RuntimeError("UNLIMITED_OCR_TRANSFORMERS_DEVICE=cuda was requested, but CUDA is not available.")
+        if requested == "mps" and not torch_module.backends.mps.is_available():
+            raise RuntimeError("UNLIMITED_OCR_TRANSFORMERS_DEVICE=mps was requested, but MPS is not available.")
+        return requested
+    if requested not in {"", "auto"}:
+        raise RuntimeError("UNLIMITED_OCR_TRANSFORMERS_DEVICE must be auto, cuda, mps, or cpu.")
+    if torch_module.cuda.is_available():
+        return "cuda"
+    if torch_module.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def select_transformers_dtype(torch_module, device: str):
+    requested = TRANSFORMERS_DTYPE
+    dtype_by_name = {
+        "float32": torch_module.float32,
+        "fp32": torch_module.float32,
+        "bfloat16": torch_module.bfloat16,
+        "bf16": torch_module.bfloat16,
+        "float16": torch_module.float16,
+        "fp16": torch_module.float16,
+    }
+    if requested in dtype_by_name:
+        return dtype_by_name[requested]
+    if requested not in {"", "auto"}:
+        raise RuntimeError("UNLIMITED_OCR_TRANSFORMERS_DTYPE must be auto, float32, bfloat16, or float16.")
+    return torch_module.bfloat16 if device == "cuda" else torch_module.float32
+
+
 async def get_transformers_components():
     global TRANSFORMERS_TOKENIZER, TRANSFORMERS_MODEL, TRANSFORMERS_MODEL_LOADING, TRANSFORMERS_MODEL_ERROR
-    global TRANSFORMERS_MODEL_LOADED_AT
+    global TRANSFORMERS_MODEL_LOADED_AT, TRANSFORMERS_RUNTIME
     if TRANSFORMERS_TOKENIZER is not None and TRANSFORMERS_MODEL is not None:
         return TRANSFORMERS_TOKENIZER, TRANSFORMERS_MODEL
 
@@ -259,19 +366,32 @@ async def get_transformers_components():
             return TRANSFORMERS_TOKENIZER, TRANSFORMERS_MODEL
 
         def load_model():
+            global TRANSFORMERS_RUNTIME
             import torch
             from transformers import AutoModel, AutoTokenizer
 
+            device = select_transformers_device(torch)
+            dtype = select_transformers_dtype(torch, device)
+            model_kwargs = {
+                "trust_remote_code": True,
+                "use_safetensors": True,
+                "torch_dtype": dtype,
+            }
+            if TRANSFORMERS_ATTENTION_IMPLEMENTATION:
+                model_kwargs["attn_implementation"] = TRANSFORMERS_ATTENTION_IMPLEMENTATION
+
             tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-            model = AutoModel.from_pretrained(
-                MODEL_NAME,
-                trust_remote_code=True,
-                use_safetensors=True,
-                torch_dtype=torch.bfloat16,
-            )
+            model = AutoModel.from_pretrained(MODEL_NAME, **model_kwargs)
             model = model.eval()
-            if torch.cuda.is_available():
+            if device == "cuda":
                 model = model.cuda()
+            elif device != "cpu":
+                model = model.to(device)
+            TRANSFORMERS_RUNTIME = {
+                "device": device,
+                "dtype": str(dtype).replace("torch.", ""),
+                "attentionImplementation": TRANSFORMERS_ATTENTION_IMPLEMENTATION or None,
+            }
             return tokenizer, model
 
         TRANSFORMERS_MODEL_LOADING = True
@@ -310,18 +430,7 @@ async def unload_transformers_components() -> dict:
             TRANSFORMERS_MODEL_ERROR = None
             TRANSFORMERS_MODEL_LOADED_AT = None
 
-            import gc
-
-            gc.collect()
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    with contextlib.suppress(Exception):
-                        torch.cuda.ipc_collect()
-            except Exception:
-                logger.debug("Torch CUDA cache cleanup skipped", exc_info=True)
+            cleanup_torch_accelerator_cache()
     return {"released": was_loaded, "modelLoaded": False}
 
 
@@ -436,6 +545,46 @@ def extract_text_from_transformers_result(result: Any, output_dir: str) -> str:
     return ""
 
 
+def single_image_transformers_attempts() -> list[dict[str, Any]]:
+    crop_mode = SINGLE_IMAGE_MODE == "gundam"
+    image_size = TRANSFORMERS_SINGLE_IMAGE_SIZE if crop_mode else max(TRANSFORMERS_SINGLE_IMAGE_SIZE, 640)
+    attempts = [
+        {
+            "label": SINGLE_IMAGE_MODE,
+            "crop_mode": crop_mode,
+            "base_size": TRANSFORMERS_SINGLE_BASE_SIZE,
+            "image_size": image_size,
+            "max_tokens": MAX_TOKENS,
+        }
+    ]
+
+    if TRANSFORMERS_MPS_OOM_RETRY:
+        attempts.append(
+            {
+                "label": "base-mps-oom-retry",
+                "crop_mode": False,
+                "base_size": TRANSFORMERS_MPS_OOM_RETRY_IMAGE_SIZE,
+                "image_size": TRANSFORMERS_MPS_OOM_RETRY_IMAGE_SIZE,
+                "max_tokens": max(1, TRANSFORMERS_MPS_OOM_RETRY_MAX_TOKENS),
+            }
+        )
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for attempt in attempts:
+        key = (
+            attempt["crop_mode"],
+            attempt["base_size"],
+            attempt["image_size"],
+            attempt["max_tokens"],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(attempt)
+    return deduped
+
+
 def run_transformers_inference_sync(
     tokenizer,
     model,
@@ -444,44 +593,68 @@ def run_transformers_inference_sync(
     stdout_writer: QueueTextWriter | None = None,
 ) -> tuple[str, dict]:
     is_multi_page = len(image_pages) > 1
-    with tempfile.TemporaryDirectory(prefix="unlimited_ocr_") as tmp_dir:
-        image_paths = write_temp_image_files(image_pages, tmp_dir)
-        output_dir = os.path.join(tmp_dir, "outputs")
-        os.makedirs(output_dir, exist_ok=True)
-        capture = stdout_writer or QueueTextWriter()
-        with contextlib.redirect_stdout(capture):
-            if is_multi_page:
-                result = model.infer_multi(
-                    tokenizer,
-                    prompt="<image>Multi page parsing.",
-                    image_files=image_paths,
-                    output_path=output_dir,
-                    image_size=1024,
-                    max_length=MAX_TOKENS,
-                    no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
-                    ngram_window=MULTI_NGRAM_WINDOW,
-                    save_results=True,
-                )
-                images_config = {"image_mode": "base", "backend": "transformers"}
-            else:
-                crop_mode = SINGLE_IMAGE_MODE == "gundam"
-                image_size = 640 if crop_mode else 1024
-                result = model.infer(
-                    tokenizer,
-                    prompt="<image>document parsing.",
-                    image_file=image_paths[0],
-                    output_path=output_dir,
-                    base_size=1024,
-                    image_size=image_size,
-                    crop_mode=crop_mode,
-                    max_length=MAX_TOKENS,
-                    no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
-                    ngram_window=SINGLE_NGRAM_WINDOW,
-                    save_results=True,
-                )
-                images_config = {"image_mode": SINGLE_IMAGE_MODE, "backend": "transformers"}
-        raw_layout_text = extract_layout_text_from_transformers_stdout(capture.text())
-        return raw_layout_text or extract_text_from_transformers_result(result, output_dir), images_config
+    try:
+        with tempfile.TemporaryDirectory(prefix="unlimited_ocr_") as tmp_dir:
+            image_paths = write_temp_image_files(image_pages, tmp_dir)
+            output_dir = os.path.join(tmp_dir, "outputs")
+            os.makedirs(output_dir, exist_ok=True)
+            capture = stdout_writer or QueueTextWriter()
+            with contextlib.redirect_stdout(capture):
+                if is_multi_page:
+                    result = model.infer_multi(
+                        tokenizer,
+                        prompt="<image>Multi page parsing.",
+                        image_files=image_paths,
+                        output_path=output_dir,
+                        image_size=1024,
+                        max_length=MAX_TOKENS,
+                        no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
+                        ngram_window=MULTI_NGRAM_WINDOW,
+                        save_results=True,
+                    )
+                    images_config = {"image_mode": "base", "backend": "transformers"}
+                else:
+                    last_error: BaseException | None = None
+                    attempts = single_image_transformers_attempts()
+                    for attempt_index, attempt in enumerate(attempts):
+                        if attempt_index:
+                            logger.warning(
+                                "Retrying Unlimited-OCR Transformers with %s after accelerator OOM",
+                                attempt["label"],
+                            )
+                        try:
+                            result = model.infer(
+                                tokenizer,
+                                prompt="<image>document parsing.",
+                                image_file=image_paths[0],
+                                output_path=output_dir,
+                                base_size=attempt["base_size"],
+                                image_size=attempt["image_size"],
+                                crop_mode=attempt["crop_mode"],
+                                max_length=attempt["max_tokens"],
+                                no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
+                                ngram_window=SINGLE_NGRAM_WINDOW,
+                                save_results=True,
+                            )
+                            images_config = {
+                                "image_mode": attempt["label"],
+                                "backend": "transformers",
+                                "base_size": attempt["base_size"],
+                                "image_size": attempt["image_size"],
+                                "max_tokens": attempt["max_tokens"],
+                            }
+                            break
+                        except Exception as err:
+                            last_error = err
+                            if attempt_index >= len(attempts) - 1 or not is_accelerator_oom(err):
+                                raise
+                            cleanup_torch_accelerator_cache()
+                    else:
+                        raise last_error or RuntimeError("Unlimited-OCR Transformers inference failed")
+            raw_layout_text = extract_layout_text_from_transformers_stdout(capture.text())
+            return raw_layout_text or extract_text_from_transformers_result(result, output_dir), images_config
+    finally:
+        cleanup_torch_accelerator_cache()
 
 
 async def generate_transformers_markdown(image_pages: list[bytes], file_type: int) -> tuple[str, dict]:
@@ -495,9 +668,21 @@ async def stream_transformers_adapter_events(
     file_type: int,
     page_texts: list[str] | None = None,
 ):
+    page_count = len(image_pages)
     if TRANSFORMERS_MODEL is None:
-        yield {"type": "progress", "markdown": "Loading Unlimited-OCR Transformers backend..."}
+        yield {
+            "type": "status",
+            "message": "Loading Unlimited-OCR Transformers backend...",
+        }
     tokenizer, model = await get_transformers_components()
+    yield {
+        "type": "status",
+        "message": (
+            "Unlimited-OCR Transformers backend is ready on "
+            f"{transformers_runtime_label()}. Parsing {page_count} page(s) at {PDF_DPI} DPI "
+            f"with max {MAX_TOKENS} tokens."
+        ),
+    }
 
     async with TRANSFORMERS_INFERENCE_LOCK:
         output_queue: queue.Queue[str] = queue.Queue()
@@ -525,10 +710,27 @@ async def stream_transformers_adapter_events(
         last_emit_size = 0
         sent_images: dict[str, str] = {}
         stdout_parts: list[str] = []
+        inference_started_at = time.monotonic()
+        last_status_emit_at = inference_started_at
         while thread.is_alive() or not output_queue.empty():
             try:
                 chunk = output_queue.get_nowait()
             except queue.Empty:
+                now = time.monotonic()
+                if (
+                    STREAM_HEARTBEAT_SECONDS > 0
+                    and not last_markdown
+                    and now - last_status_emit_at >= STREAM_HEARTBEAT_SECONDS
+                ):
+                    elapsed = int(now - inference_started_at)
+                    yield {
+                        "type": "status",
+                        "message": (
+                            f"Still parsing with Unlimited-OCR on {transformers_runtime_label()} "
+                            f"after {elapsed}s. Dense PDF pages can take several minutes on Apple Silicon."
+                        ),
+                    }
+                    last_status_emit_at = now
                 await asyncio.sleep(0.08)
                 continue
             if chunk:
@@ -552,7 +754,13 @@ async def stream_transformers_adapter_events(
 
         thread.join(timeout=1)
         if result_holder.get("error"):
-            raise result_holder["error"]
+            err = result_holder["error"]
+            logger.error(
+                "Unlimited-OCR Transformers inference failed",
+                exc_info=(type(err), err, err.__traceback__),
+            )
+            yield {"type": "error", "detail": transformers_error_detail(err)}
+            return
 
         result_text, images_config = result_holder.get("result", ("", {"backend": "transformers"}))
         raw_stdout = extract_layout_text_from_transformers_stdout(stdout_writer.text())
@@ -1282,6 +1490,12 @@ async def ndjson_event_stream(events):
 
 
 async def sglang_health_status() -> dict:
+    if "sglang" not in SUPPORTED_BACKENDS:
+        return {
+            "ready": False,
+            "disabled": True,
+            "url": SGLANG_URL,
+        }
     try:
         async with httpx.AsyncClient(timeout=1.5, trust_env=False) as client:
             response = await client.get(f"{SGLANG_URL}/health")
@@ -1306,6 +1520,7 @@ async def health():
         "backend": DEFAULT_BACKEND,
         "supportedBackends": sorted(SUPPORTED_BACKENDS),
         "model": MODEL_NAME,
+        "runtime": TRANSFORMERS_RUNTIME,
         "modelLoaded": TRANSFORMERS_MODEL is not None,
         "modelLoading": TRANSFORMERS_MODEL_LOADING,
         "modelLoadedAt": TRANSFORMERS_MODEL_LOADED_AT,
@@ -1313,6 +1528,7 @@ async def health():
         "preloadEnabled": PRELOAD_TRANSFORMERS,
         "transformers": {
             "model": MODEL_NAME,
+            "runtime": TRANSFORMERS_RUNTIME,
             "modelLoaded": TRANSFORMERS_MODEL is not None,
             "modelLoading": TRANSFORMERS_MODEL_LOADING,
             "modelLoadedAt": TRANSFORMERS_MODEL_LOADED_AT,
@@ -1329,6 +1545,7 @@ async def preload_transformers_backend():
     return {
         "status": "ok",
         "backend": "transformers",
+        "runtime": TRANSFORMERS_RUNTIME,
         "modelLoaded": TRANSFORMERS_MODEL is not None,
         "modelLoading": TRANSFORMERS_MODEL_LOADING,
         "modelLoadedAt": TRANSFORMERS_MODEL_LOADED_AT,

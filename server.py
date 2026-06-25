@@ -40,16 +40,23 @@ def parse_bool_env(name: str, default: str = "0") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
-UNLIMITED_OCR_SUPPORTED_BACKENDS = {"transformers", "sglang"}
+UNLIMITED_OCR_KNOWN_BACKENDS = {"transformers", "sglang"}
+UNLIMITED_OCR_SUPPORTED_BACKENDS = {
+    item.strip().lower()
+    for item in os.getenv("UNLIMITED_OCR_SUPPORTED_BACKENDS", "transformers,sglang").split(",")
+    if item.strip().lower() in UNLIMITED_OCR_KNOWN_BACKENDS
+} or {"transformers"}
 
 
 def normalize_unlimited_ocr_backend(value: str | None, fallback: str | None = None) -> str:
     backend = str(value or fallback or "").strip().lower()
     if backend in UNLIMITED_OCR_SUPPORTED_BACKENDS:
         return backend
-    if fallback is not None:
-        return fallback
-    raise HTTPException(status_code=400, detail="Unsupported Unlimited-OCR backend. Use transformers or sglang.")
+    fallback_backend = str(fallback or "").strip().lower()
+    if fallback_backend in UNLIMITED_OCR_SUPPORTED_BACKENDS:
+        return fallback_backend
+    supported = ", ".join(sorted(UNLIMITED_OCR_SUPPORTED_BACKENDS))
+    raise HTTPException(status_code=400, detail=f"Unsupported Unlimited-OCR backend. Use one of: {supported}.")
 
 
 def parse_positive_int_env(name: str, default: str) -> int:
