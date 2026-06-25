@@ -1,4 +1,5 @@
-FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
+ARG CUDA_BASE_IMAGE=nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
+FROM ${CUDA_BASE_IMAGE}
 
 ARG UNLIMITED_OCR_SGLANG_WHEEL_URL=https://github.com/baidu/Unlimited-OCR/raw/main/wheel/sglang-0.0.0.dev11416%2Bg92e8bb79e-py3-none-any.whl
 

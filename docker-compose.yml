@@ -11,6 +11,7 @@ x-unlimited-ocr-sglang-image: &unlimited-ocr-sglang-image
     context: .
     dockerfile: Dockerfile.unlimited-ocr-sglang
     args:
+      CUDA_BASE_IMAGE: ${UNLIMITED_OCR_SGLANG_CUDA_BASE_IMAGE:-nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04}
       UNLIMITED_OCR_SGLANG_WHEEL_URL: ${UNLIMITED_OCR_SGLANG_WHEEL_URL:-https://github.com/baidu/Unlimited-OCR/raw/main/wheel/sglang-0.0.0.dev11416%2Bg92e8bb79e-py3-none-any.whl}
   image: pandocr-unlimited-ocr-sglang:latest
 

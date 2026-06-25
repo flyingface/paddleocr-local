@@ -68,12 +68,19 @@ function Get-RequiredCommand {
 
 function Get-GpuList {
     $args = @(
-        "--query-gpu=index,name,memory.total,memory.free",
+        "--query-gpu=index,name,compute_cap,memory.total,memory.free",
         "--format=csv,noheader,nounits"
     )
     $output = & nvidia-smi @args
     if ($LASTEXITCODE -ne 0) {
-        throw "nvidia-smi failed. Please install/update the NVIDIA driver first."
+        $args = @(
+            "--query-gpu=index,name,memory.total,memory.free",
+            "--format=csv,noheader,nounits"
+        )
+        $output = & nvidia-smi @args
+        if ($LASTEXITCODE -ne 0) {
+            throw "nvidia-smi failed. Please install/update the NVIDIA driver first."
+        }
     }
 
     $gpus = @()
@@ -87,11 +94,23 @@ function Get-GpuList {
             throw "Unexpected nvidia-smi output: $line"
         }
 
+        $hasComputeCapability = $parts.Count -ge 5
+        $computeCapability = $null
+        $memoryOffset = 2
+        if ($hasComputeCapability) {
+            $computeText = $parts[2].Trim()
+            if (-not [string]::IsNullOrWhiteSpace($computeText) -and $computeText -ne "[N/A]") {
+                $computeCapability = [double]$computeText
+            }
+            $memoryOffset = 3
+        }
+
         $gpus += [pscustomobject]@{
             Index = [int]($parts[0].Trim())
             Name = $parts[1].Trim()
-            TotalMiB = [int]([double]($parts[2].Trim()))
-            FreeMiB = [int]([double]($parts[3].Trim()))
+            ComputeCapability = $computeCapability
+            TotalMiB = [int]([double]($parts[$memoryOffset].Trim()))
+            FreeMiB = [int]([double]($parts[$memoryOffset + 1].Trim()))
         }
     }
 
@@ -114,7 +133,8 @@ function Select-Gpu {
 
     Write-Section "Detected NVIDIA GPUs"
     foreach ($gpu in $Gpus) {
-        Write-Host ("GPU {0}: {1} | total={2} MiB free={3} MiB" -f $gpu.Index, $gpu.Name, $gpu.TotalMiB, $gpu.FreeMiB)
+        $compute = Format-ComputeCapability $gpu.ComputeCapability
+        Write-Host ("GPU {0}: {1} | {2} | total={3} MiB free={4} MiB" -f $gpu.Index, $gpu.Name, $compute, $gpu.TotalMiB, $gpu.FreeMiB)
     }
 
     if ($RequestedGpuId -ge 0) {
@@ -126,6 +146,33 @@ function Select-Gpu {
     }
 
     return @($Gpus | Sort-Object -Property FreeMiB -Descending)[0]
+}
+
+function Format-ComputeCapability {
+    param($ComputeCapability)
+
+    if ($null -eq $ComputeCapability) {
+        return "sm=unknown"
+    }
+
+    $capability = [double]$ComputeCapability
+    $major = [int][Math]::Floor($capability)
+    $minor = [int][Math]::Round(($capability - $major) * 10)
+    return "sm$major$minor"
+}
+
+function Test-GpuSupportsSglang {
+    param([object]$Gpu)
+
+    if ($null -eq $Gpu.ComputeCapability) {
+        Write-Warn "Could not detect GPU compute capability. SGLang requires sm75 or newer; deployment will continue and may fail if the GPU is older."
+        return
+    }
+
+    if ([double]$Gpu.ComputeCapability -lt 7.5) {
+        $compute = Format-ComputeCapability $Gpu.ComputeCapability
+        throw "Unlimited-OCR SGLang requires NVIDIA compute capability sm75 or newer. GPU $($Gpu.Index) ($($Gpu.Name)) is $compute. Use -UnlimitedOcrBackend transformers on this GPU."
+    }
 }
 
 function Resolve-BaseEnvFile {
@@ -517,11 +564,11 @@ function Get-ContainerStatus {
     $format = "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}"
     try {
         $output = & docker inspect --format $format $Name 2>$null
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($output)) {
+            return "missing|none"
+        }
     }
     catch {
-        return "missing|none"
-    }
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($output)) {
         return "missing|none"
     }
 
@@ -647,6 +694,9 @@ try {
 
     if ($gpu.TotalMiB -lt 8192) {
         throw "GPU $($gpu.Index) has only $($gpu.TotalMiB) MiB VRAM. PaddleOCR-VL requires at least 8192 MiB."
+    }
+    if ($script:EnableUnlimitedOcr -and $script:UnlimitedOcrBackend -eq "sglang") {
+        Test-GpuSupportsSglang -Gpu $gpu
     }
     if ($gpu.FreeMiB -lt 6656) {
         throw "GPU $($gpu.Index) has only $($gpu.FreeMiB) MiB free VRAM. Close GPU-heavy apps or choose another GPU with -GpuId."
