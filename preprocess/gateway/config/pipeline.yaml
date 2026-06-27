@@ -1,64 +1,44 @@
 # 编排规则 (Pipeline Configuration)
+#
+# 改这个文件,Gateway 会自动加载新规则(开发模式无需重启)。
+# 生产模式用 PUT /config/pipeline 热更新。
 
-> 这个文件决定 Gateway 怎么串起各个前置服务。
-> **改 YAML 即可调流程,不需要重发版。**
+# 默认 OCR 路由(没分类结果时)
+default_ocr:
+  service: pp-ocrv6
+  mode: general
 
-## 字段说明
-
-```yaml
+# Pipeline 顺序
 pipeline:
-  - stage: <阶段名>           # correction / classify / route
-    service: <服务地址>        # 子服务 URL,route 阶段不填
-    type: ocr_router          # 仅 route 阶段需要
-    condition: <条件表达式>    # 可选, 满足才执行
-    on_missing: skip | error  # 服务挂了怎么办
-    timeout_ms: 5000           # 单步超时
-```
-
-## 示例:完整流程
-
-```yaml
-pipeline:
+  # ---- 矫正阶段 ----
   - stage: correction
     service: http://paddleocr-preprocess-correction:8080
-    on_missing: skip
+    on_missing: skip      # 服务挂了跳过,继续走后续 stage
     timeout_ms: 10000
 
+  # ---- 分类阶段 ----
   - stage: classify
     service: http://paddleocr-preprocess-classify:8080
-    on_missing: skip
+    on_missing: skip      # 分类服务没部署时跳过
     timeout_ms: 5000
 
+  # ---- 路由决策(纯逻辑) ----
   - stage: route
     type: ocr_router
-    default_ocr: pp-ocrv6
-    rules:
-      - if: "classification.label in ['id_card', 'passport', 'driving_license', 'bank_card']"
-        then:
-          service: pp-ocrv6
-          mode: structured_card
-      - if: "classification.label in ['invoice', 'receipt']"
-        then:
-          service: paddleocr-vl-api
-          mode: layout_parsing
-      - if: "classification.label in ['contract', 'report']"
-        then:
-          service: paddleocr-vl-api
-          mode: layout_parsing
-      - if: "classification.label == 'menu'"
-        then:
-          service: pp-ocrv6
-          mode: menu_translate
-```
+    on_missing: skip
+    timeout_ms: 100
 
-## 占位配置(当前)
-
-```yaml
-pipeline: []
-```
-
-> 等子服务实现完成后填入真实规则。
-
----
-
-_这个文件会被 Gateway 启动时加载,改完保存即生效(开发模式)。_
+# 路由规则(L1 分类 → OCR 服务映射)
+# 在 app.py 的 decide_ocr_route() 里实现,这里只是文档化
+routing_table:
+  id_card:            { service: pp-ocrv6,         mode: structured_card }
+  passport:           { service: pp-ocrv6,         mode: structured_card }
+  driving_license:    { service: pp-ocrv6,         mode: structured_card }
+  bank_card:          { service: pp-ocrv6,         mode: structured_card }
+  invoice:            { service: paddleocr-vl-api, mode: layout_parsing }
+  receipt:            { service: paddleocr-vl-api, mode: layout_parsing }
+  contract:           { service: paddleocr-vl-api, mode: layout_parsing }
+  report:             { service: paddleocr-vl-api, mode: layout_parsing }
+  menu:               { service: pp-ocrv6,         mode: menu_translate }
+  handwriting:        { service: paddleocr-vl-api, mode: layout_parsing }
+  default:            { service: pp-ocrv6,         mode: general }
