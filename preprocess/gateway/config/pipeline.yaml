@@ -1,0 +1,64 @@
+# 编排规则 (Pipeline Configuration)
+
+> 这个文件决定 Gateway 怎么串起各个前置服务。
+> **改 YAML 即可调流程,不需要重发版。**
+
+## 字段说明
+
+```yaml
+pipeline:
+  - stage: <阶段名>           # correction / classify / route
+    service: <服务地址>        # 子服务 URL,route 阶段不填
+    type: ocr_router          # 仅 route 阶段需要
+    condition: <条件表达式>    # 可选, 满足才执行
+    on_missing: skip | error  # 服务挂了怎么办
+    timeout_ms: 5000           # 单步超时
+```
+
+## 示例:完整流程
+
+```yaml
+pipeline:
+  - stage: correction
+    service: http://paddleocr-preprocess-correction:8080
+    on_missing: skip
+    timeout_ms: 10000
+
+  - stage: classify
+    service: http://paddleocr-preprocess-classify:8080
+    on_missing: skip
+    timeout_ms: 5000
+
+  - stage: route
+    type: ocr_router
+    default_ocr: pp-ocrv6
+    rules:
+      - if: "classification.label in ['id_card', 'passport', 'driving_license', 'bank_card']"
+        then:
+          service: pp-ocrv6
+          mode: structured_card
+      - if: "classification.label in ['invoice', 'receipt']"
+        then:
+          service: paddleocr-vl-api
+          mode: layout_parsing
+      - if: "classification.label in ['contract', 'report']"
+        then:
+          service: paddleocr-vl-api
+          mode: layout_parsing
+      - if: "classification.label == 'menu'"
+        then:
+          service: pp-ocrv6
+          mode: menu_translate
+```
+
+## 占位配置(当前)
+
+```yaml
+pipeline: []
+```
+
+> 等子服务实现完成后填入真实规则。
+
+---
+
+_这个文件会被 Gateway 启动时加载,改完保存即生效(开发模式)。_
