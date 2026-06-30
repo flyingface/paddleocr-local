@@ -215,6 +215,8 @@ Windows + NVIDIA 用户推荐直接使用一键部署脚本：
 .\windows-one-click.bat
 ```
 
+> **WSL 部署说明：** 如果你在 Windows 平台使用 WSL (Windows Subsystem for Linux) 进行部署，可以完全复用 Linux 环境的命令。注意配置 WSL 的 Docker Daemon 网络代理，否则模型下载可能会失败。详见 `DOCKER_DEPLOY.md` 中的常见网络故障排查。
+
 它会自动检查 Docker、识别 NVIDIA GPU、选择 `env.txt` 或 `env.docker`，询问当前要部署的模型，只拉取/构建选中的模型服务和 `pandocr-web`，然后启动 WebUI 并等待当前活跃模型健康检查。未部署的模型仍会显示在 WebUI 中，后续可在页面上触发下载/构建和容器创建。失败时会自动打印相关模型服务和 `pandocr-web` 的关键日志。
 
 常用一键部署参数：

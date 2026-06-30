@@ -98,6 +98,50 @@ docker compose --env-file env.txt build pandocr-web
 docker compose --env-file env.txt up -d --no-deps --force-recreate pandocr-web
 ```
 
+## 常见问题与网络排错
+
+### WSL/内网环境下载模型超时
+在受限内网环境或 Windows WSL 中，PaddleX 容器内置的自动模型下载可能会遇到 DNS 解析失败（`Temporary failure in name resolution`）或下载卡住的情况，导致容器启动陷入 `health: starting` 的死循环。
+
+**现象：**
+- WebUI 顶部一直显示 `启动中`。
+- 执行 `docker logs paddleocr-vl-api` 或 `paddleocr-vlm-server` 看到 `FileNotFoundError: [Errno 2] No such file or directory`。
+
+**解决办法（手动下载权重）：**
+建议在宿主机（Windows 或 WSL 原生环境）中手动下载并解压权重到挂载目录。
+
+1. 大模型权重下载（使用 ModelScope）：
+```bash
+pip install modelscope
+python -c "from modelscope import snapshot_download; snapshot_download('PaddlePaddle/PaddleOCR-VL-1.6', local_dir='model_cache/official_models/PaddleOCR-VL-1.6')"
+```
+
+2. 辅助小模型下载（PP-LCNet、UVDoc、PP-DocLayoutV3）：
+编写 Python 脚本从百度云下载并解压：
+```python
+import urllib.request, tarfile
+from pathlib import Path
+
+models = [
+    ("https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-LCNet_x1_0_doc_ori_infer.tar", "model_cache/official_models/PP-LCNet_x1_0_doc_ori"),
+    ("https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/UVDoc_infer.tar", "model_cache/official_models/UVDoc"),
+    ("https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-DocLayoutV3_infer.tar", "model_cache/official_models/PP-DocLayoutV3")
+]
+for url, path in models:
+    Path(path).mkdir(parents=True, exist_ok=True)
+    tar_path = Path(path) / "model.tar"
+    urllib.request.urlretrieve(url, tar_path)
+    tarfile.open(tar_path).extractall(path=path)
+    tar_path.unlink()
+```
+
+*注意：`PP-DocLayoutV3_infer.tar` 解压后可能会多出一层同名子目录（`PP-DocLayoutV3_infer`），需要将里面的 `inference.yml` 等文件移动到 `model_cache/official_models/PP-DocLayoutV3/` 根目录。*
+
+完成后重启受影响的容器：
+```bash
+docker-compose --env-file env.txt restart paddleocr-vlm-server paddleocr-vl-api
+```
+
 如果只改了挂载的 `static/` 或 `server.py`，也可以直接重建/重启：
 
 ```powershell
