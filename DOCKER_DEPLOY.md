@@ -53,7 +53,7 @@ latest-nvidia-gpu-offline
 
 下文命令以 `env.txt` 为例；如果你使用 RTX 30/40 系列，请把命令中的 `env.txt` 换成 `env.docker`。
 
-## 启动
+## 启动与停止
 
 Windows + NVIDIA 用户推荐直接运行一键部署脚本：
 
@@ -61,19 +61,45 @@ Windows + NVIDIA 用户推荐直接运行一键部署脚本：
 .\windows-one-click.bat
 ```
 
-脚本会自动选择环境文件、清理旧容器、创建模型容器但只启动 WebUI，然后等待默认活跃模型健康。手动部署命令如下：
+脚本会自动选择环境文件、清理旧容器、创建模型容器但只启动 WebUI，然后等待默认活跃模型健康。
 
+### WSL 下的手动启停指南
+如果你在 Windows 下使用 WSL，可以直接在 PowerShell 中通过 `wsl bash -c` 前缀来无缝管理服务。因为采用了单卡动态切模型的架构，**切勿直接使用 `up -d` 启动所有容器**，这会导致显存 OOM。
+
+**1. 日常启动（只启动 WebUI，模型由 WebUI 动态调度）**
 ```powershell
-docker compose --env-file env.txt pull paddleocr-vlm-server paddleocr-vl-api
-docker compose --env-file env.txt build paddleocr-ocr-api pandocr-web
-docker compose --env-file env.txt up -d --no-start
-docker compose --env-file env.txt start pandocr-web
+wsl bash -c "docker-compose --env-file env.txt up -d --no-start"
+wsl bash -c "docker-compose --env-file env.txt start pandocr-web"
+```
+
+**2. 彻底停止并释放资源**
+```powershell
+wsl bash -c "docker-compose --env-file env.txt down"
+```
+
+**3. 重启 Web 服务（更新代码后）**
+前端、FastAPI 或文档预览逻辑变更后，只需要重建并重启 `pandocr-web`：
+```powershell
+wsl bash -c "docker compose --env-file env.txt build pandocr-web"
+wsl bash -c "docker compose --env-file env.txt up -d --no-deps --force-recreate pandocr-web"
+```
+
+**4. 常用监控排错命令**
+```powershell
+# 查看所有容器健康状态
+wsl bash -c "docker ps -a"
+
+# 查看 Web 后端日志
+wsl bash -c "docker logs -f pandocr-web"
+
+# 查看大模型推理日志
+wsl bash -c "docker logs -f paddleocr-vlm-server"
 ```
 
 ## 健康检查
 
 ```powershell
-docker compose --env-file env.txt ps
+wsl bash -c "docker ps"
 curl http://localhost:8000/api/models
 curl http://localhost:8000/api/model-runtime
 curl http://localhost:8081/health
@@ -87,15 +113,6 @@ curl http://localhost:8081/health
 
 ```json
 {"default":"paddleocr-vl-1.6","data":[{"id":"paddleocr-vl-1.6","name":"PaddleOCR-VL-1.6-0.9B"},{"id":"pp-ocrv6","name":"PP-OCRv6_medium"}],"originProtection":true,"maxConcurrentOcr":1}
-```
-
-## 重启 Web 服务
-
-前端、FastAPI 或文档预览逻辑变更后，只需要重建并重启 `pandocr-web`：
-
-```powershell
-docker compose --env-file env.txt build pandocr-web
-docker compose --env-file env.txt up -d --no-deps --force-recreate pandocr-web
 ```
 
 ## 常见问题与网络排错
